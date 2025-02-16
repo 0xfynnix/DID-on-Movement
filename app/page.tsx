@@ -1,101 +1,262 @@
-import Image from "next/image";
+"use client";
+
+import { useAptosWallet } from "@razorlabs/wallet-kit";
+import { useState, useEffect } from "react";
+import {
+  InputEntryFunctionData,
+  InputViewFunctionData,
+  Aptos,
+  AptosConfig,
+} from "@aptos-labs/ts-sdk";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { Header } from "@/components/header";
+import { useToast } from "@/hooks/use-toast";
+
+const DID_TYPES = [
+  { value: "0", label: "Human" },
+  { value: "1", label: "Organization" },
+  { value: "2", label: "AI Agent" },
+  { value: "3", label: "Smart Contract" },
+];
+
+const MODULE_ADDRESS = "0x61b96051f553d767d7e6dfcc04b04c28d793c8af3d07d3a43b4e2f8f4ca04c9f";
+
+const config = new AptosConfig({
+  fullnode: "https://aptos.testnet.bardock.movementlabs.xyz/v1",
+});
+const client = new Aptos(config);
+
+// 定义标题样式变体
+const TITLE_STYLES = [
+  {
+    title: "pixel-text-rainbow",
+    link: "pixel-link-bounce",
+    color: "text-[var(--pixel-accent)]"
+  },
+  {
+    title: "pixel-text-glitch",
+    link: "pixel-link-shake",
+    color: "text-[#ff71ce]" // 霓虹粉
+  },
+  {
+    title: "pixel-text-pulse",
+    link: "pixel-link-spin",
+    color: "text-[#01cdfe]" // 霓虹蓝
+  },
+  {
+    title: "pixel-text-wave",
+    link: "pixel-link-blink",
+    color: "text-[#05ffa1]" // 霓虹绿
+  },
+  {
+    title: "pixel-text-rainbow",
+    link: "pixel-link-bounce",
+    color: "text-[#b967ff]" // 霓虹紫
+  },
+  {
+    title: "pixel-text-glitch",
+    link: "pixel-link-shake",
+    color: "text-[#fffb96]" // 霓虹黄
+  }
+];
 
 export default function Home() {
-  return (
-    <div className="grid grid-rows-[20px_1fr_20px] items-center justify-items-center min-h-screen p-8 pb-20 gap-16 sm:p-20 font-[family-name:var(--font-geist-sans)]">
-      <main className="flex flex-col gap-8 row-start-2 items-center sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={180}
-          height={38}
-          priority
-        />
-        <ol className="list-inside list-decimal text-sm text-center sm:text-left font-[family-name:var(--font-geist-mono)]">
-          <li className="mb-2">
-            Get started by editing{" "}
-            <code className="bg-black/[.05] dark:bg-white/[.06] px-1 py-0.5 rounded font-semibold">
-              app/page.tsx
-            </code>
-            .
-          </li>
-          <li>Save and see your changes instantly.</li>
-        </ol>
+  const { account, connected, signAndSubmitTransaction } = useAptosWallet();
+  const [didType, setDidType] = useState<string>("");
+  const [description, setDescription] = useState<string>("");
+  const [didInfo, setDidInfo] = useState<{
+    type: string;
+    description: string;
+  } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [fetchingInfo, setFetchingInfo] = useState(false);
+  const [styleVariant] = useState(() => 
+    TITLE_STYLES[Math.floor(Math.random() * TITLE_STYLES.length)]
+  );
+  const { success, error } = useToast();
 
-        <div className="flex gap-4 items-center flex-col sm:flex-row">
-          <a
-            className="rounded-full border border-solid border-transparent transition-colors flex items-center justify-center bg-foreground text-background gap-2 hover:bg-[#383838] dark:hover:bg-[#ccc] text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={20}
-              height={20}
-            />
-            Deploy now
-          </a>
-          <a
-            className="rounded-full border border-solid border-black/[.08] dark:border-white/[.145] transition-colors flex items-center justify-center hover:bg-[#f2f2f2] dark:hover:bg-[#1a1a1a] hover:border-transparent text-sm sm:text-base h-10 sm:h-12 px-4 sm:px-5 sm:min-w-44"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Read our docs
-          </a>
+  useEffect(() => {
+    if (connected && account?.address) {
+      setDidInfo(null);
+      setFetchingInfo(true);
+      fetchDidInfo().finally(() => {
+        setFetchingInfo(false);
+      });
+    } else {
+      setDidInfo(null);
+    }
+  }, [connected, account]);
+
+  const fetchDidInfo = async () => {
+    try {
+      // 调用合约获取DID信息
+      const type = await getType();
+      const desc = await getDescription();
+      if (type !== null && desc) {
+        setDidInfo({ type: DID_TYPES[type].label, description: desc });
+      }else{
+        setDidInfo(null);
+      }
+    } catch (error) {
+      console.error("Error fetching DID info:", error);
+    }
+  };
+
+  const getType = async (): Promise<number | null> => {
+    if (!account?.address) return null;
+    
+    try {
+      const payload: InputViewFunctionData = {
+        function: `${MODULE_ADDRESS}::addr_aggregator::get_type`,
+        typeArguments: [],
+        functionArguments: [account.address],
+      };
+      
+      const response = await client.view({ payload });
+      return Number(response[0]);
+    } catch (error) {
+      console.error("Error fetching type:", error);
+      return null;
+    }
+  };
+
+  const getDescription = async (): Promise<string | null> => {
+    if (!account?.address) return null;
+    
+    try {
+      const payload: InputViewFunctionData = {
+        function: `${MODULE_ADDRESS}::addr_aggregator::get_description`,
+        typeArguments: [],
+        functionArguments: [account.address],
+      };
+      
+      const response = await client.view({ payload });
+      return response[0] as string;
+    } catch (error) {
+      console.error("Error fetching description:", error);
+      return null;
+    }
+  };
+
+  const handleCreateDid = async () => {
+    if (!connected || !account?.address) {
+      error("Please connect wallet first");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const payload: InputEntryFunctionData = {
+        function: `${MODULE_ADDRESS}::init::init`,
+        typeArguments: [],
+        functionArguments: [parseInt(didType), description],
+      };
+
+      const response = await signAndSubmitTransaction({ payload }) as unknown as { hash: string };
+      console.log("Transaction hash:", response);
+      
+      // 等待交易确认
+      try {
+        const pendingTransaction = await client.waitForTransaction({
+          transactionHash: response.hash ,
+        });
+        console.log("Transaction confirmed:", pendingTransaction);
+        
+        // 交易确认后再获取DID信息
+        await fetchDidInfo();
+        success("DID created successfully!");
+      } catch (err) {
+        console.error("Error waiting for transaction:", err);
+        error("Transaction failed to confirm. Please try again.");
+      }
+    } catch (err) {
+      console.error("Error creating DID:", err);
+      error("Failed to create DID. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen pixel-font bg-[var(--pixel-background)] text-[var(--pixel-text)]">
+      <Header />
+      <div className="container mx-auto px-4 py-8">
+        <div className="pt-20">
+          <div className="text-center mb-8">
+            <h1 className={`text-3xl mb-4 pixel-text ${styleVariant.title} ${styleVariant.color}`}>
+              Generate the Identity on the Movement!
+            </h1>
+            <a
+              href="https://x.com/intent/follow?screen_name=root_mud"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`inline-block text-sm transition-colors underline pixel-text ${styleVariant.link} ${styleVariant.color}`}
+            >
+              follow us
+            </a>
+          </div>
+
+          {!connected ? (
+            <div className="text-center">
+              <p className="mb-4 pixel-text text-[var(--pixel-accent)]">
+                Please connect your wallet to continue
+              </p>
+            </div>
+          ) : fetchingInfo ? (
+            <div className="max-w-md mx-auto bg-[var(--pixel-card)] p-6 rounded-lg pixel-border">
+              <h2 className="text-xl mb-4 pixel-text text-center">Loading DID Information...</h2>
+              <div className="pixel-loading"></div>
+            </div>
+          ) : didInfo ? (
+            <div className="max-w-md mx-auto bg-[var(--pixel-card)] p-6 rounded-lg pixel-border">
+              <h2 className="text-xl mb-4 pixel-text">Your DID Information</h2>
+              <p className="mb-2">Type: {didInfo.type}</p>
+              <p>Description: {didInfo.description}</p>
+            </div>
+          ) : (
+            <div className="max-w-md mx-auto bg-[var(--pixel-card)] p-6 rounded-lg pixel-border">
+              <h2 className="text-xl mb-4 pixel-text">Create DID</h2>
+              <div className="space-y-4">
+                <Select onValueChange={setDidType}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select DID Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {DID_TYPES.map((type) => (
+                      <SelectItem key={type.value} value={type.value}>
+                        {type.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+
+                <Input
+                  placeholder="Enter description"
+                  value={description}
+                  onChange={(e) => setDescription(e.target.value)}
+                  className="pixel-input"
+                />
+
+                <Button
+                  onClick={handleCreateDid}
+                  disabled={!didType || !description || loading}
+                  className="w-full pixel-button"
+                >
+                  {loading ? "Creating..." : "Create DID"}
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
-      </main>
-      <footer className="row-start-3 flex gap-6 flex-wrap items-center justify-center">
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/file.svg"
-            alt="File icon"
-            width={16}
-            height={16}
-          />
-          Learn
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/window.svg"
-            alt="Window icon"
-            width={16}
-            height={16}
-          />
-          Examples
-        </a>
-        <a
-          className="flex items-center gap-2 hover:underline hover:underline-offset-4"
-          href="https://nextjs.org?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <Image
-            aria-hidden
-            src="/globe.svg"
-            alt="Globe icon"
-            width={16}
-            height={16}
-          />
-          Go to nextjs.org →
-        </a>
-      </footer>
+      </div>
     </div>
   );
 }
